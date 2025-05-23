@@ -1,11 +1,12 @@
 local http = require "resty.http"
 local cjson = require "cjson"
+local base64 = ngx.encode_base64
 
 local waf_host = "http://r-waf:5000"
 
 local client_ip = ngx.var.remote_addr
 local user_agent = ngx.var.http_user_agent or ""
-local request_path = ngx.var.uri or ""
+local request_path = ngx.var.request_uri or ""
 local request_method = ngx.req.get_method()
 local request_body = ""
 
@@ -16,11 +17,12 @@ end
 
 local httpc = http.new()
 local res, err = httpc:request_uri(waf_host .. "/check", {
-    method = "GET",
+    method = "POST",
     body = cjson.encode({
         ip = client_ip,
         user_agent = user_agent,
-        path = request_path
+        path = base64(request_path),
+        body_raw_b64 = base64(request_body)
     }),
     headers = {
         ["Content-Type"] = "application/json"
