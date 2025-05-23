@@ -76,6 +76,11 @@ def ensure_dirs_and_files(config):
             "/wp-admin",
             "/phpmyadmin",
             "/.env",
+            "<script>",
+            "%3Cscript%3E",
+            "(?i)union select",
+            "(?i)or 1=1",
+            "(?i)drop table",
             "/\\.git",
             ".*\\.bak"
         ],
@@ -84,6 +89,7 @@ def ensure_dirs_and_files(config):
             "(?i)or 1=1",
             "(?i)drop table",
             "<script>",
+            "%3Cscript%3E",
             "base64_decode"
         ]
     }
