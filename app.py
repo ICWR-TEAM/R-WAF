@@ -13,6 +13,7 @@ print(r"""
 """)
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -256,6 +257,8 @@ class WAFApp:
 
     def check_request(self, ip, user_agent, path, body=""):
         banned, reason = self.is_banned(ip)
+        clean_path = path.decode('utf-8') if isinstance(path, bytes) else path
+        clean_body = body.decode('utf-8') if isinstance(body, bytes) else body
         if banned:
             logger.info(f"Blocked banned IP {ip}: {reason}")
             return {"action": "block", "reason": f"banned: {reason}"}
@@ -275,14 +278,14 @@ class WAFApp:
 
         for path_rule_file in [fname for fname in self.rules if "paths" in fname]:
             for pattern in self.rules.get(path_rule_file, []):
-                if re.search(pattern, path):
+                if re.search(pattern, clean_path):
                     logger.info(f"Blocked IP {ip} by path pattern: {pattern}")
                     self.add_ban(ip, reason="path_blocked")
                     return {"action": "block", "reason": "path_blocked"}
 
         for body_rule_file in [fname for fname in self.rules if "body" in fname]:
             for pattern in self.rules.get(body_rule_file, []):
-                if re.search(pattern, body):
+                if re.search(pattern, clean_body):
                     logger.info(f"Blocked IP {ip} by body pattern: {pattern}")
                     self.add_ban(ip, reason="body_blocked")
                     return {"action": "block", "reason": "body_blocked"}
@@ -339,13 +342,17 @@ class WAFApp:
             self.load_whitelist()
             return jsonify({"status": "reloaded"})
 
-        @self.app.route("/check", methods=["GET"])
+        @self.app.route("/check", methods=["POST"])
         def check():
             data = request.json or {}
             ip = data.get("ip", "")
             ua = data.get("user_agent", "")
-            path = data.get("path", "")
-            body_raw = request.data.decode('utf-8', errors='ignore') if request.data else ""
+            path = base64.b64decode(data.get("path", ""))
+            body_raw_b64 = data.get("body_raw_b64", "")
+            try:
+                body_raw = base64.b64decode(body_raw_b64).decode('utf-8', errors='ignore')
+            except Exception:
+                body_raw = ""
             return jsonify(self.check_request(ip, ua, path, body_raw))
 
         @self.app.route("/ban/list", methods=["GET"])
