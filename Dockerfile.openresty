@@ -1,0 +1,10 @@
+FROM openresty/openresty:alpine-fat
+
+RUN apk add --no-cache curl build-base openssl-dev
+
+RUN luarocks install lua-resty-http
+
+COPY nginx/nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+COPY nginx/lua /etc/nginx/lua
+
+CMD ["/usr/local/openresty/bin/openresty", "-g", "daemon off;"]

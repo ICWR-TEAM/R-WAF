@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  r-waf:
+    build:
+      context: .
+      dockerfile: Dockerfile.rwaf
+    volumes:
+      - ./rwaf:/app/rwaf
+    ports:
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  openresty:
+    #image: openresty/openresty:alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.openresty
+    depends_on:
+      - r-waf
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./nginx/lua:/etc/nginx/lua:ro
+      - ./www:/www
