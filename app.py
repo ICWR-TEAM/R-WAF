@@ -198,10 +198,6 @@ class WAFApp:
         def wrapper(self, *args):
             return method(self, *args)
         return wrapper
-
-    @cached_wrapper
-    def is_banned_cached(self, ip):
-        return self.is_banned(ip)
     
     @cached_wrapper
     def check_request_cached(self, ip, header, user_agent, path, body=""):
@@ -298,8 +294,7 @@ class WAFApp:
 
     def check_request(self, ip, header, user_agent, path, body=""):
         try:
-            #banned, reason = self.is_banned(ip)
-            banned, reason = self.is_banned_cached(ip)
+            banned, reason = self.is_banned(ip)
             
             decode = lambda v: base64.b64decode(v).decode('utf-8') if v else ""
             header = "\r\n".join( f"{k.title()}: {v}" for k, v in json.loads( decode(header.decode() if isinstance(header, bytes) else header) ).items() )
