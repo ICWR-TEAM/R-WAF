@@ -5,7 +5,7 @@ local base64 = ngx.encode_base64
 local waf_host = "http://r-waf:5000"
 
 local client_ip = ngx.var.remote_addr
-local header = ngx.req.get_headers()
+local header = cjson.encode(ngx.req.get_headers())
 local user_agent = ngx.var.http_user_agent or ""
 local request_path = ngx.var.request_uri or ""
 local request_method = ngx.req.get_method()

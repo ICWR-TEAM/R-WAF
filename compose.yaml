@@ -6,6 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile.rwaf
     volumes:
+      - ./app.py:/app/app.py
       - ./rwaf:/app/rwaf
     ports:
       - "5000:5000"

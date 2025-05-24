@@ -69,12 +69,12 @@ def ensure_dirs_and_files(config):
             "10.0.0.2"
         ],
         "headers_patterns.json": [
-            "(?i)union select",
-            "(?i)or 1=1",
-            "(?i)drop table",
-            "<script>",
-            "<?php",
-            "base64_decode"
+            r"(?i)union\s+select",
+            r"(?i)or\s+1=1",
+            r"(?i)drop\s+table",
+            r"<script>",
+            r"<\?php",
+            r"base64_decode"
         ],
         "user_agents.json": [
             "sqlmap",
@@ -83,25 +83,25 @@ def ensure_dirs_and_files(config):
             "curl"
         ],
         "paths.json": [
-            "/wp-admin",
-            "/phpmyadmin",
-            "/.env",
-            "<script>",
-            "<?php",
-            "eval(",
-            "(?i)union select",
-            "(?i)or 1=1",
-            "(?i)drop table",
-            "/\\.git",
-            ".*\\.bak"
+            r"/wp-admin",
+            r"/phpmyadmin",
+            r"/\.env",
+            r"<script>",
+            r"<\?php",
+            r"eval\(",
+            r"(?i)union\s+select",
+            r"(?i)or\s+1=1",
+            r"(?i)drop\s+table",
+            r"/\.git",
+            r".*\.bak"
         ],
         "body_patterns.json": [
-            "(?i)union select",
-            "(?i)or 1=1",
-            "(?i)drop table",
-            "<script>",
-            "<?php",
-            "base64_decode"
+            r"(?i)union\s+select",
+            r"(?i)or\s+1=1",
+            r"(?i)drop\s+table",
+            r"<script>",
+            r"<\?php",
+            r"base64_decode"
         ]
     }
 
@@ -265,12 +265,19 @@ class WAFApp:
             return False, None
         return True, info["reason"]
     
-    def pattern_check(self, pattern, str):
+    def try_base64_decode(self, s):
+        try:
+            decoded = base64.b64decode(s, validate=True)
+            return decoded.decode('utf-8', errors='ignore')
+        except Exception:
+            return s
+    
+    def pattern_check(self, pattern, string):
         try:
             variants = [
-                str,
-                unquote(str),
-                base64.b64decode(str).decode('utf-8', errors='ignore')
+                string,
+                unquote(string),
+                self.try_base64_decode(string)
             ]
             return any(re.search(pattern, v) for v in variants)
         except Exception as e:
@@ -280,10 +287,11 @@ class WAFApp:
     def check_request(self, ip, header, user_agent, path, body=""):
         try:
             banned, reason = self.is_banned(ip)
-
-            header = header.decode() if isinstance(header, bytes) else header
-            path = path.decode() if isinstance(path, bytes) else path
-            body = body.decode() if isinstance(body, bytes) else body
+            
+            decode = lambda v: base64.b64decode(v) if v else ""
+            header = "\r\n".join( f"{k.title()}: {v}" for k, v in json.loads( decode(header.decode() if isinstance(header, bytes) else header) ).items() )
+            path = decode(path.decode()) if isinstance(path, bytes) else path
+            body = decode(body.decode()) if isinstance(body, bytes) else body
 
             if banned:
                 logger.info(f"Blocked banned IP {ip}: {reason}")
@@ -369,12 +377,11 @@ class WAFApp:
         @self.app.route("/check", methods=["POST"])
         def check():
             data = request.json or {}
-            decode = lambda v: base64.b64decode(v).decode('utf-8', 'ignore') if v else ""
             ip = data.get("ip", "")
             ua = data.get("user_agent", "")
-            path = decode(data.get("path", ""))
-            header = decode(data.get("header", ""))
-            body_raw = decode(data.get("body_raw_b64", ""))
+            path = data.get("path", "")
+            header = data.get("header", "")
+            body_raw = data.get("body_raw_b64", "")
             return jsonify(self.check_request(ip, header, ua, path, body_raw))
 
         @self.app.route("/ban/list", methods=["GET"])
