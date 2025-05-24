@@ -20,7 +20,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from urllib.parse import unquote
+from urllib.parse import unquote_plus
 
 from flask import Flask, request, jsonify
 
@@ -72,7 +72,6 @@ def ensure_dirs_and_files(config):
             r"(?i)union\s+select",
             r"(?i)or\s+1=1",
             r"(?i)drop\s+table",
-            r"<script>",
             r"<\?php",
             r"base64_decode"
         ],
@@ -276,10 +275,10 @@ class WAFApp:
         try:
             variants = [
                 string,
-                unquote(string),
+                unquote_plus(string),
                 self.try_base64_decode(string)
             ]
-            return any(re.search(pattern, v) for v in variants)
+            return any(re.search(pattern.lower(), v.lower()) for v in variants)
         except Exception as e:
             logger.info(f"Error: {e}")
         return False
@@ -288,10 +287,10 @@ class WAFApp:
         try:
             banned, reason = self.is_banned(ip)
             
-            decode = lambda v: base64.b64decode(v) if v else ""
+            decode = lambda v: base64.b64decode(v).decode('utf-8') if v else ""
             header = "\r\n".join( f"{k.title()}: {v}" for k, v in json.loads( decode(header.decode() if isinstance(header, bytes) else header) ).items() )
-            path = decode(path.decode()) if isinstance(path, bytes) else path
-            body = decode(body.decode()) if isinstance(body, bytes) else body
+            path = decode(path)
+            body = decode(body)
 
             if banned:
                 logger.info(f"Blocked banned IP {ip}: {reason}")
