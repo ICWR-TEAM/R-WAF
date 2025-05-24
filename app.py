@@ -20,6 +20,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from urllib.parse import unquote
 
 from flask import Flask, request, jsonify
 
@@ -35,15 +36,15 @@ DEFAULT_CONFIG = {
     "bans_file": BANS_FILE_DEFAULT,
     "whitelist_file": WHITELIST_FILE_DEFAULT,
     "banned_page_file": os.path.join(BASE_DIR, "banned.html"),
-    "api_key": "mysecretapikey123",
+    "api_key": "incrustwerush.org",
     "host": "0.0.0.0",
     "port": 5000,
     "debug": False,
-    "delay_ban_minutes": 60,
+    "delay_ban_minutes": 3,
     "base_dir": BASE_DIR
 }
 
-logger = None  # global logger, setup in main()
+logger = None
 
 
 def ensure_dirs_and_files(config):
@@ -67,6 +68,14 @@ def ensure_dirs_and_files(config):
             "192.168.1.100",
             "10.0.0.2"
         ],
+        "headers_patterns.json": [
+            "(?i)union select",
+            "(?i)or 1=1",
+            "(?i)drop table",
+            "<script>",
+            "<?php",
+            "base64_decode"
+        ],
         "user_agents.json": [
             "sqlmap",
             "nikto",
@@ -78,7 +87,8 @@ def ensure_dirs_and_files(config):
             "/phpmyadmin",
             "/.env",
             "<script>",
-            "%3Cscript%3E",
+            "<?php",
+            "eval(",
             "(?i)union select",
             "(?i)or 1=1",
             "(?i)drop table",
@@ -90,7 +100,7 @@ def ensure_dirs_and_files(config):
             "(?i)or 1=1",
             "(?i)drop table",
             "<script>",
-            "%3Cscript%3E",
+            "<?php",
             "base64_decode"
         ]
     }
@@ -254,44 +264,58 @@ class WAFApp:
             self.save_bans()
             return False, None
         return True, info["reason"]
+    
+    def pattern_check(self, pattern, str):
+        try:
+            variants = [
+                str,
+                unquote(str),
+                base64.b64decode(str).decode('utf-8', errors='ignore')
+            ]
+            return any(re.search(pattern, v) for v in variants)
+        except Exception as e:
+            logger.info(f"Error: {e}")
+        return False
 
-    def check_request(self, ip, user_agent, path, body=""):
-        banned, reason = self.is_banned(ip)
-        clean_path = path.decode('utf-8') if isinstance(path, bytes) else path
-        clean_body = body.decode('utf-8') if isinstance(body, bytes) else body
-        if banned:
-            logger.info(f"Blocked banned IP {ip}: {reason}")
-            return {"action": "block", "reason": f"banned: {reason}"}
+    def check_request(self, ip, header, user_agent, path, body=""):
+        try:
+            banned, reason = self.is_banned(ip)
 
-        for ip_rule_file in [fname for fname in self.rules if "ip_blocklist" in fname]:
-            if ip in self.rules.get(ip_rule_file, []):
-                logger.info(f"Blocked IP by ip_blocklist: {ip}")
-                self.add_ban(ip, reason="ip_blocklist")
-                return {"action": "block", "reason": "ip_blocklist"}
+            header = header.decode() if isinstance(header, bytes) else header
+            path = path.decode() if isinstance(path, bytes) else path
+            body = body.decode() if isinstance(body, bytes) else body
 
-        for ua_rule_file in [fname for fname in self.rules if "user_agents" in fname]:
-            for bad_ua in self.rules.get(ua_rule_file, []):
-                if bad_ua.lower() in user_agent.lower():
-                    logger.info(f"Blocked IP {ip} by bad user-agent: {user_agent}")
-                    self.add_ban(ip, reason="bad_user_agent")
-                    return {"action": "block", "reason": "bad_user_agent"}
+            if banned:
+                logger.info(f"Blocked banned IP {ip}: {reason}")
+                return {"action": "block", "reason": f"banned: {reason}"}
 
-        for path_rule_file in [fname for fname in self.rules if "paths" in fname]:
-            for pattern in self.rules.get(path_rule_file, []):
-                if re.search(pattern, clean_path):
-                    logger.info(f"Blocked IP {ip} by path pattern: {pattern}")
-                    self.add_ban(ip, reason="path_blocked")
-                    return {"action": "block", "reason": "path_blocked"}
+            targets = {
+                "ip_blocklist": ip,
+                "user_agents": user_agent.lower(),
+                "headers": header,
+                "paths": path,
+                "body": body,
+            }
 
-        for body_rule_file in [fname for fname in self.rules if "body" in fname]:
-            for pattern in self.rules.get(body_rule_file, []):
-                if re.search(pattern, clean_body):
-                    logger.info(f"Blocked IP {ip} by body pattern: {pattern}")
-                    self.add_ban(ip, reason="body_blocked")
-                    return {"action": "block", "reason": "body_blocked"}
+            for rule_type, target in targets.items():
+                for fname in filter(lambda f: rule_type in f, self.rules):
+                    for rule in self.rules.get(fname, []):
+                        if rule_type == "ip_blocklist" and ip == rule:
+                            logger.info(f"Blocked IP by ip_blocklist: {ip}")
+                            self.add_ban(ip, reason="ip_blocklist")
+                            return {"action": "block", "reason": "ip_blocklist"}
+                        if rule_type == "user_agents" and rule.lower() in target:
+                            logger.info(f"Blocked IP {ip} by bad user-agent: {user_agent}")
+                            self.add_ban(ip, reason="bad_user_agent")
+                            return {"action": "block", "reason": "bad_user_agent"}
+                        if rule_type in {"headers", "paths", "body"} and self.pattern_check(rule, target):
+                            logger.info(f"Blocked IP {ip} by {rule_type} pattern: {rule}")
+                            self.add_ban(ip, reason=f"{rule_type}_blocked")
+                            return {"action": "block", "reason": f"{rule_type}_blocked"}
 
+        except Exception as e:
+            logger.exception(f"Exception during check_request: {e}")
         return {"action": "allow"}
-
 
     def add_ban(self, ip, minutes=None, reason="manual ban"):
         if ip in self.whitelist:
@@ -345,15 +369,13 @@ class WAFApp:
         @self.app.route("/check", methods=["POST"])
         def check():
             data = request.json or {}
+            decode = lambda v: base64.b64decode(v).decode('utf-8', 'ignore') if v else ""
             ip = data.get("ip", "")
             ua = data.get("user_agent", "")
-            path = base64.b64decode(data.get("path", ""))
-            body_raw_b64 = data.get("body_raw_b64", "")
-            try:
-                body_raw = base64.b64decode(body_raw_b64).decode('utf-8', errors='ignore')
-            except Exception:
-                body_raw = ""
-            return jsonify(self.check_request(ip, ua, path, body_raw))
+            path = decode(data.get("path", ""))
+            header = decode(data.get("header", ""))
+            body_raw = decode(data.get("body_raw_b64", ""))
+            return jsonify(self.check_request(ip, header, ua, path, body_raw))
 
         @self.app.route("/ban/list", methods=["GET"])
         @self.require_api_key
