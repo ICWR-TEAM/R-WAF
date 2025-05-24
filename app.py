@@ -21,6 +21,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import unquote_plus
+from functools import lru_cache
 
 from flask import Flask, request, jsonify
 
@@ -45,7 +46,6 @@ DEFAULT_CONFIG = {
 }
 
 logger = None
-
 
 def ensure_dirs_and_files(config):
     os.makedirs(config["rules_dir"], exist_ok=True)
@@ -157,8 +157,6 @@ def ensure_dirs_and_files(config):
         with open(banned_html_path, "w", encoding="utf-8") as f:
             f.write(banned_html_content.strip())
 
-
-
 def setup_logger(base_dir):
     global logger
     os.makedirs(base_dir, exist_ok=True)
@@ -181,7 +179,7 @@ class WAFApp:
         self.whitelist_file = config["whitelist_file"]
         self.api_key = config["api_key"]
         self.banned_page_file = config["banned_page_file"]
-        self.delay_ban_minutes = config.get("delay_ban_minutes", 60)
+        self.delay_ban_minutes = config["delay_ban_minutes"]
 
         self.rules = {}
         self.bans = {}
@@ -193,6 +191,21 @@ class WAFApp:
 
         self.app = Flask(__name__)
         self.setup_routes()
+
+    @staticmethod
+    def cached_wrapper(method):
+        @lru_cache(maxsize=512)
+        def wrapper(self, *args):
+            return method(self, *args)
+        return wrapper
+
+    @cached_wrapper
+    def is_banned_cached(self, ip):
+        return self.is_banned(ip)
+    
+    @cached_wrapper
+    def check_request_cached(self, ip, header, user_agent, path, body=""):
+        return self.check_request(ip, header, user_agent, path, body)
 
     def load_rules(self):
         self.rules = {}
@@ -285,7 +298,8 @@ class WAFApp:
 
     def check_request(self, ip, header, user_agent, path, body=""):
         try:
-            banned, reason = self.is_banned(ip)
+            #banned, reason = self.is_banned(ip)
+            banned, reason = self.is_banned_cached(ip)
             
             decode = lambda v: base64.b64decode(v).decode('utf-8') if v else ""
             header = "\r\n".join( f"{k.title()}: {v}" for k, v in json.loads( decode(header.decode() if isinstance(header, bytes) else header) ).items() )
@@ -381,7 +395,8 @@ class WAFApp:
             path = data.get("path", "")
             header = data.get("header", "")
             body_raw = data.get("body_raw_b64", "")
-            return jsonify(self.check_request(ip, header, ua, path, body_raw))
+            #return jsonify(self.check_request(ip, header, ua, path, body_raw))
+            return jsonify(self.check_request_cached(ip, header, ua, path, body_raw))
 
         @self.app.route("/ban/list", methods=["GET"])
         @self.require_api_key
