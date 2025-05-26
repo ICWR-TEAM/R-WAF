@@ -31,7 +31,7 @@ BANS_DIR = os.path.join(BASE_DIR, "bans")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 BANS_FILE_DEFAULT = os.path.join(BANS_DIR, "bans.json")
 WHITELIST_FILE_DEFAULT = os.path.join(BANS_DIR, "whitelist.json")
-cache_maxsize = 32
+CACHE_MAXSIZE = 32
 
 DEFAULT_CONFIG = {
     "rules_dir": RULES_DIR,
@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
     "port": 5000,
     "debug": False,
     "delay_ban_minutes": 3,
-    "cache_maxsize": cache_maxsize,
+    "cache_maxsize": CACHE_MAXSIZE,
     "base_dir": BASE_DIR
 }
 
@@ -87,6 +87,7 @@ def ensure_dirs_and_files(config):
             r"/wp-admin",
             r"/phpmyadmin",
             r"/\.env",
+            r"../etc/passwd",
             r"<script>",
             r"<\?php",
             r"eval\(",
@@ -183,8 +184,8 @@ class WAFApp:
         self.banned_page_file = config["banned_page_file"]
         self.delay_ban_minutes = config["delay_ban_minutes"]
         self.cache_maxsize = config['cache_maxsize']
-        global cache_maxsize
-        cache_maxsize = self.cache_maxsize
+        global CACHE_MAXSIZE
+        CACHE_MAXSIZE = self.cache_maxsize
 
         self.rules = {}
         self.bans = {}
@@ -199,7 +200,7 @@ class WAFApp:
 
     @staticmethod
     def cached_wrapper(method):
-        @lru_cache(maxsize=cache_maxsize)
+        @lru_cache(maxsize=CACHE_MAXSIZE)
         def wrapper(self, *args):
             return method(self, *args)
         return wrapper
