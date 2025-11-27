@@ -40,9 +40,9 @@ R-WAF is a Python + Flask-based Web Application Firewall that protects against c
   ┌───────────┴────────────┐
   │       Data Storage     │
   │ ┌───────────────────┐  │
-  │ │ Rules JSON Files   │ │
-  │ │ Bans / Whitelist   │ │
-  │ │ Cached Requests    │ │
+  │ │ Rules JSON Files  │  │
+  │ │ Bans / Whitelist  │  │
+  │ │ Cached Requests   │  │
   │ └───────────────────┘  │
   └────────────────────────┘
 
