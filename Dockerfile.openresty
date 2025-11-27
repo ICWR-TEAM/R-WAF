@@ -1,0 +1,18 @@
+FROM openresty/openresty:alpine-fat
+
+RUN apk add --no-cache curl build-base openssl-dev
+
+RUN luarocks install lua-resty-http
+
+COPY nginx/lua /etc/nginx/lua
+COPY nginx/nginx.conf /usr/local/openresty/nginx/conf/nginx.conf.template
+
+RUN cat <<'EOF' > /entrypoint.sh
+#!/bin/sh
+envsubst '$WEB_SERVER_HOST $WEB_SERVER_PORT' < /usr/local/openresty/nginx/conf/nginx.conf.template > /usr/local/openresty/nginx/conf/nginx.conf
+exec /usr/local/openresty/bin/openresty -g 'daemon off;'
+EOF
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
