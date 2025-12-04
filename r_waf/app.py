@@ -285,12 +285,14 @@ def main():
     config_path = args.config if args.config else CONFIG_PATH
     config = load_config(config_path)
     
+    # Load API key from environment
     api_key_env = os.environ.get('RWAF_API_KEY')
     if api_key_env:
         config['api_key'] = api_key_env
         logger_temp = logging.getLogger(__name__)
         logger_temp.info("API Key loaded from environment variable")
     
+    # Dashboard settings from environment
     enable_dashboard = os.environ.get('ENABLE_DASHBOARD', 'false').lower() == 'true'
     dashboard_port = int(os.environ.get('DASHBOARD_PORT', '1337'))
     
@@ -301,6 +303,7 @@ def main():
 
     waf = WAFApp(config)
     
+    # Run main WAF on port 5000
     from threading import Thread
     waf_thread = Thread(target=lambda: waf.app.run(
         host=config["host"], 
