@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import base64
+import threading
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,14 @@ class AlertManager:
     def __init__(self, alerts_dir="data/alerts"):
         self.alerts_dir = alerts_dir
         os.makedirs(self.alerts_dir, exist_ok=True)
+        self._locks = {}
+        self._locks_lock = threading.Lock()
+    
+    def _get_lock(self, date_str):
+        with self._locks_lock:
+            if date_str not in self._locks:
+                self._locks[date_str] = threading.Lock()
+            return self._locks[date_str]
     
     def get_alert_file(self, date_str=None):
         if date_str:
@@ -29,32 +38,51 @@ class AlertManager:
             logger.error(f"Failed to load alerts from {alert_file}: {e}")
             return []
     
-    def save_alerts(self, alerts):
-        alert_file = self.get_alert_file()
-        try:
-            with open(alert_file, "w", encoding="utf-8") as f:
-                json.dump(alerts, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"Failed to save alerts to {alert_file}: {e}")
+    def save_alerts(self, alerts, date_str=None):
+        if date_str is None:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        alert_file = self.get_alert_file(date_str)
+        file_lock = self._get_lock(date_str)
+        
+        with file_lock:
+            temp_file = alert_file + ".tmp"
+            try:
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(alerts, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_file, alert_file)
+            except Exception as e:
+                logger.error(f"Failed to save alerts to {alert_file}: {e}")
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
     
     def log_alert(self, module_name, action, reason, ip, method="", path="", user_agent="", matched_rule="", status_code=None):
-        alerts = self.load_alerts()
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        file_lock = self._get_lock(date_str)
         
-        alert = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "module": module_name,
-            "action": action,
-            "reason": reason,
-            "ip": ip,
-            "method": method,
-            "path": base64.b64decode(path.encode()).decode() if path else "",
-            "user_agent": user_agent[:100] if user_agent else "",
-            "matched_rule": str(matched_rule)[:200] if matched_rule else "",
-            "status_code": status_code
-        }
-        
-        alerts.append(alert)
-        self.save_alerts(alerts)
+        with file_lock:
+            alerts = self.load_alerts()
+            
+            alert = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "module": module_name,
+                "action": action,
+                "reason": reason,
+                "ip": ip,
+                "method": method,
+                "path": base64.b64decode(path.encode()).decode() if path else "",
+                "user_agent": user_agent[:100] if user_agent else "",
+                "matched_rule": str(matched_rule)[:200] if matched_rule else "",
+                "status_code": status_code
+            }
+            
+            alerts.append(alert)
+            self.save_alerts(alerts, date_str)
         
         logger.warning(f"[ALERT] {module_name} | {action} | {reason} | IP: {ip}")
     

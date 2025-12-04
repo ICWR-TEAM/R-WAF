@@ -6,6 +6,23 @@ local _M = {}
 local WAF_HOST = "http://r-waf:5000"
 local config_cache = nil
 local config_cache_time = 0
+local ban_cache = ngx.shared.ban_cache
+local waf_cache = ngx.shared.waf_cache
+
+local httpc_pool = {
+    keepalive_timeout = 60000,
+    keepalive_pool = 10
+}
+
+local function get_client_ip()
+    local ip = ngx.var.http_x_forwarded_for or ngx.var.http_cf_connecting_ip or ngx.var.remote_addr
+    if not ip then return nil end
+    local pos = ip:find(",", 1, true)
+    if pos then
+        return ip:sub(1, pos - 1)
+    end
+    return ip
+end
 
 function _M.get_config()
     local now = ngx.time()
@@ -16,7 +33,9 @@ function _M.get_config()
     local httpc = http.new()
     httpc:set_timeout(2000)
     local res, err = httpc:request_uri(WAF_HOST .. "/config", {
-        method = "GET"
+        method = "GET",
+        keepalive_timeout = httpc_pool.keepalive_timeout,
+        keepalive_pool = httpc_pool.keepalive_pool
     })
     
     if res and res.status == 200 then
@@ -34,8 +53,20 @@ end
 
 function _M.check_request()
     local config = _M.get_config()
-    local client_ip = ngx.var.http_x_forwarded_for or ngx.var.http_cf_connecting_ip or ngx.var.remote_addr
-    client_ip = client_ip:match("([^,]+)")
+    local client_ip = get_client_ip()
+    
+    if not client_ip then
+        return ngx.exit(ngx.HTTP_BAD_REQUEST)
+    end
+    
+    local cache_key = "ban:" .. client_ip
+    local cached_ban = ban_cache:get(cache_key)
+    if cached_ban == "1" then
+        ngx.status = ngx.HTTP_FORBIDDEN
+        ngx.header.content_type = "text/html"
+        ngx.say("<h1>Access Denied</h1>")
+        return ngx.exit(ngx.HTTP_FORBIDDEN)
+    end
     
     local header = cjson.encode(ngx.req.get_headers())
     local user_agent = ngx.var.http_user_agent or ""
@@ -49,6 +80,7 @@ function _M.check_request()
     end
 
     local httpc = http.new()
+    httpc:set_timeout(3000)
     local res, err = httpc:request_uri(WAF_HOST .. "/check", {
         method = "POST",
         body = cjson.encode({
@@ -61,7 +93,9 @@ function _M.check_request()
         }),
         headers = {
             ["Content-Type"] = "application/json"
-        }
+        },
+        keepalive_timeout = httpc_pool.keepalive_timeout,
+        keepalive_pool = httpc_pool.keepalive_pool
     })
 
     if not res then
@@ -72,6 +106,8 @@ function _M.check_request()
     local waf_response = cjson.decode(res.body)
 
     if waf_response["action"] == "block" then
+        ban_cache:set(cache_key, "1", 300)
+        
         local ban_page_res, ban_err = httpc:request_uri(WAF_HOST .. "/banned_page", {
             method = "POST",
             body = cjson.encode({
@@ -79,7 +115,9 @@ function _M.check_request()
             }),
             headers = {
                 ["Content-Type"] = "application/json"
-            }
+            },
+            keepalive_timeout = httpc_pool.keepalive_timeout,
+            keepalive_pool = httpc_pool.keepalive_pool
         })
 
         if not ban_page_res then
@@ -116,11 +154,8 @@ function _M.accumulate_response_body()
     if not ctx.response_status then
         ctx.response_status = ngx.status
         ctx.response_method = ngx.var.request_method
-        ctx.response_ip = ngx.var.http_x_forwarded_for or ngx.var.http_cf_connecting_ip or ngx.var.remote_addr
+        ctx.response_ip = get_client_ip()
         ctx.response_headers = cjson.encode(ngx.resp.get_headers())
-        if ctx.response_ip then
-            ctx.response_ip = ctx.response_ip:match("([^,]+)")
-        end
     end
 end
 
@@ -172,7 +207,9 @@ function _M.check_response_async()
             headers = {
                 ["Content-Type"] = "application/json",
             },
-            ssl_verify = false
+            ssl_verify = false,
+            keepalive_timeout = httpc_pool.keepalive_timeout,
+            keepalive_pool = httpc_pool.keepalive_pool
         })
         
         if not res then
@@ -182,6 +219,7 @@ function _M.check_response_async()
         
         local waf_response = cjson.decode(res.body)
         if waf_response.action == "block" then
+            ban_cache:set("ban:" .. ip, "1", 300)
             ngx.log(ngx.WARN, "IP ", ip, " banned due to response pattern: ", waf_response.reason or "unknown")
         end
     end)
