@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R-WAF Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #000;
+            color: #fff;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            border-bottom: 2px solid #fff;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .logo {
+            width: 60px;
+            height: 60px;
+        }
+        
+        .header-text {
+            flex: 1;
+        }
+        
+        h1 {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: #1a1a1a;
+            border: 1px solid #fff;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        
+        .stat-card h3 {
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            opacity: 0.8;
+        }
+        
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #fff;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1em;
+            border-bottom: 2px solid transparent;
+        }
+        
+        .tab.active {
+            border-bottom-color: #fff;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .filters {
+            background: #1a1a1a;
+            border: 1px solid #fff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        label {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        input, select, button {
+            background: #000;
+            border: 1px solid #fff;
+            color: #fff;
+            padding: 8px 12px;
+            font-family: inherit;
+            border-radius: 3px;
+        }
+        
+        button {
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #fff;
+            color: #000;
+        }
+        
+        .btn-primary {
+            background: #fff;
+            color: #000;
+        }
+        
+        .btn-primary:hover {
+            background: #000;
+            color: #fff;
+        }
+        
+        .btn-danger {
+            background: #ff0000;
+            border-color: #ff0000;
+        }
+        
+        .btn-danger:hover {
+            background: #000;
+            color: #ff0000;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            background: #1a1a1a;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #fff;
+        }
+        
+        th {
+            background: #000;
+            font-weight: bold;
+        }
+        
+        tr:hover {
+            background: #2a2a2a;
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .pagination button {
+            min-width: 40px;
+        }
+        
+        .pagination button.active {
+            background: #fff;
+            color: #000;
+        }
+        
+        footer {
+            border-top: 2px solid #fff;
+            margin-top: 50px;
+            padding-top: 20px;
+            text-align: center;
+            opacity: 0.8;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #000;
+            border: 2px solid #fff;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            border-radius: 5px;
+        }
+        
+        .modal-header {
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+        
+        .modal-body {
+            margin-bottom: 20px;
+        }
+        
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .alert {
+            padding: 15px;
+            border: 1px solid #fff;
+            margin-bottom: 20px;
+            border-radius: 3px;
+        }
+        
+        .alert-success {
+            background: #004400;
+        }
+        
+        .alert-error {
+            background: #440000;
+        }
+        
+        .status-badge {
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.85em;
+        }
+        
+        .status-active {
+            background: #ff0000;
+        }
+        
+        .status-expired {
+            background: #444;
+        }
+        
+        .logout-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="logout-btn" onclick="logout()">Logout</button>
+        
+        <header>
+            <img src="/static/icwr-logo.png" alt="ICWR Logo" class="logo">
+            <div class="header-text">
+                <h1>R-WAF Dashboard</h1>
+                <p>Real-time Web Application Firewall Monitoring</p>
+            </div>
+        </header>
+        
+        <div class="stats-grid" id="stats">
+            <div class="stat-card">
+                <h3>Total Alerts</h3>
+                <div class="value" id="total-alerts">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Blocked IPs</h3>
+                <div class="value" id="blocked-ips">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Bans</h3>
+                <div class="value" id="active-bans">0</div>
+            </div>
+        </div>
+        
+        <div style="background: #1a1a1a; border: 1px solid #fff; padding: 20px; margin-bottom: 30px; border-radius: 5px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0;">Alert Timeline</h2>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <select id="granularity" style="background: #000; border: 1px solid #fff; color: #fff; padding: 5px 10px; border-radius: 3px;">
+                        <option value="hour">Per Hour</option>
+                        <option value="day">Per Day</option>
+                    </select>
+                    <input type="date" id="chart-start-date" style="background: #000; border: 1px solid #fff; color: #fff; padding: 5px 10px; border-radius: 3px;">
+                    <input type="date" id="chart-end-date" style="background: #000; border: 1px solid #fff; color: #fff; padding: 5px 10px; border-radius: 3px;">
+                    <button onclick="updateChart()" style="background: #fff; color: #000; border: none; padding: 6px 15px; cursor: pointer; border-radius: 3px;">Update</button>
+                </div>
+            </div>
+            <canvas id="alertChart" style="max-height: 300px;"></canvas>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('alerts')">Alerts</button>
+            <button class="tab" onclick="switchTab('bans')">Ban Management</button>
+        </div>
+        
+        <!-- Alerts Tab -->
+        <div class="tab-content active" id="alerts-tab">
+            <div class="filters">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Start Date</label>
+                        <input type="date" id="start-date">
+                    </div>
+                    <div class="filter-group">
+                        <label>End Date</label>
+                        <input type="date" id="end-date">
+                    </div>
+                    <div class="filter-group">
+                        <label>Keyword</label>
+                        <input type="text" id="keyword" placeholder="Search IP, path, reason...">
+                    </div>
+                    <div class="filter-group" style="justify-content: flex-end;">
+                        <label>&nbsp;</label>
+                        <button class="btn-primary" onclick="filterAlerts()">Search</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="alert-message"></div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>IP</th>
+                        <th>Module</th>
+                        <th>Action</th>
+                        <th>Reason</th>
+                        <th>Path</th>
+                    </tr>
+                </thead>
+                <tbody id="alerts-table">
+                    <tr>
+                        <td colspan="6" style="text-align: center;">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="pagination" id="alerts-pagination"></div>
+        </div>
+        
+        <!-- Bans Tab -->
+        <div class="tab-content" id="bans-tab">
+            <div style="margin-bottom: 20px;">
+                <button class="btn-primary" onclick="showBanModal()">+ Add Manual Ban</button>
+            </div>
+            
+            <div id="ban-message"></div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>IP Address</th>
+                        <th>Reason</th>
+                        <th>Banned Until</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="bans-table">
+                    <tr>
+                        <td colspan="5" style="text-align: center;">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <footer>
+            <p>Powered by R&D incrustwerush.org</p>
+        </footer>
+    </div>
+    
+    <!-- Ban Modal -->
+    <div class="modal" id="ban-modal">
+        <div class="modal-content">
+            <div class="modal-header">Add Manual Ban</div>
+            <div class="modal-body">
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>IP Address</label>
+                    <input type="text" id="ban-ip" placeholder="e.g., 192.168.1.100">
+                </div>
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>Reason</label>
+                    <input type="text" id="ban-reason" placeholder="e.g., Malicious activity">
+                </div>
+                <div class="filter-group">
+                    <label>Duration (minutes)</label>
+                    <input type="number" id="ban-duration" placeholder="15" value="15">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeBanModal()">Cancel</button>
+                <button class="btn-danger" onclick="submitBan()">Ban IP</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_KEY = localStorage.getItem('rwaf_api_key');
+        let currentPage = 1;
+        let alertChart = null;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!API_KEY) {
+                window.location.href = '/dashboard/login';
+                return;
+            }
+            
+            const end = new Date();
+            const start = new Date();
+            start.setDate(start.getDate() - 7);
+            
+            document.getElementById('start-date').valueAsDate = start;
+            document.getElementById('end-date').valueAsDate = end;
+            document.getElementById('chart-start-date').valueAsDate = start;
+            document.getElementById('chart-end-date').valueAsDate = end;
+            
+            loadStats();
+            loadAlerts();
+            loadBans();
+            initChart();
+            loadChartData();
+            
+            setInterval(() => {
+                loadStats();
+                loadChartData();
+                if (document.querySelector('.tab.active').textContent === 'Alerts') {
+                    loadAlerts();
+                } else {
+                    loadBans();
+                }
+            }, 30000);
+        });
+        
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tab + '-tab').classList.add('active');
+            
+            if (tab === 'alerts') {
+                loadAlerts();
+            } else {
+                loadBans();
+            }
+        }
+        
+        async function loadStats() {
+            try {
+                const response = await fetch('/dashboard/api/stats', {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load stats');
+                
+                const data = await response.json();
+                document.getElementById('total-alerts').textContent = data.total_alerts;
+                document.getElementById('blocked-ips').textContent = data.blocked_ips;
+                document.getElementById('active-bans').textContent = data.active_bans;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function loadAlerts(page = 1) {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const keyword = document.getElementById('keyword').value;
+            
+            const params = new URLSearchParams({
+                page: page,
+                per_page: 20
+            });
+            
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            if (keyword) params.append('keyword', keyword);
+            
+            try {
+                const response = await fetch('/dashboard/api/alerts?' + params, {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load alerts');
+                
+                const data = await response.json();
+                renderAlerts(data.alerts);
+                renderPagination(data.page, data.total_pages, 'alerts');
+                currentPage = page;
+            } catch (error) {
+                console.error('Error loading alerts:', error);
+                document.getElementById('alerts-table').innerHTML = 
+                    '<tr><td colspan="6" style="text-align: center; color: #ff0000;">Error loading alerts</td></tr>';
+            }
+        }
+        
+        function renderAlerts(alerts) {
+            const tbody = document.getElementById('alerts-table');
+            
+            if (alerts.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No alerts found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = alerts.map(alert => `
+                <tr>
+                    <td>${new Date(alert.timestamp).toLocaleString()}</td>
+                    <td>${alert.ip}</td>
+                    <td>${alert.module}</td>
+                    <td>${alert.action}</td>
+                    <td>${alert.reason}</td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${alert.path}</td>
+                </tr>
+            `).join('');
+        }
+        
+        async function loadBans() {
+            try {
+                const response = await fetch('/dashboard/api/bans', {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load bans');
+                
+                const data = await response.json();
+                renderBans(data.bans);
+            } catch (error) {
+                console.error('Error loading bans:', error);
+                document.getElementById('bans-table').innerHTML = 
+                    '<tr><td colspan="5" style="text-align: center; color: #ff0000;">Error loading bans</td></tr>';
+            }
+        }
+        
+        function renderBans(bans) {
+            const tbody = document.getElementById('bans-table');
+            
+            if (bans.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No banned IPs</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = bans.map(ban => `
+                <tr>
+                    <td>${ban.ip}</td>
+                    <td>${ban.reason}</td>
+                    <td>${new Date(ban.until).toLocaleString()}</td>
+                    <td>
+                        <span class="status-badge ${ban.active ? 'status-active' : 'status-expired'}">
+                            ${ban.active ? 'ACTIVE' : 'EXPIRED'}
+                        </span>
+                    </td>
+                    <td>
+                        ${ban.active ? `<button class="btn-danger" onclick="unbanIP('${ban.ip}')">Unban</button>` : '-'}
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        function renderPagination(current, total, type) {
+            const container = document.getElementById(type + '-pagination');
+            
+            if (total <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            if (current > 1) {
+                html += `<button onclick="loadAlerts(${current - 1})">← Prev</button>`;
+            }
+            
+            for (let i = 1; i <= total; i++) {
+                if (i === 1 || i === total || (i >= current - 2 && i <= current + 2)) {
+                    html += `<button class="${i === current ? 'active' : ''}" onclick="loadAlerts(${i})">${i}</button>`;
+                } else if (i === current - 3 || i === current + 3) {
+                    html += '<span>...</span>';
+                }
+            }
+            
+            if (current < total) {
+                html += `<button onclick="loadAlerts(${current + 1})">Next →</button>`;
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        function filterAlerts() {
+            loadAlerts(1);
+        }
+        
+        function showBanModal() {
+            document.getElementById('ban-modal').classList.add('active');
+        }
+        
+        function closeBanModal() {
+            document.getElementById('ban-modal').classList.remove('active');
+            document.getElementById('ban-ip').value = '';
+            document.getElementById('ban-reason').value = '';
+            document.getElementById('ban-duration').value = '15';
+        }
+        
+        async function submitBan() {
+            const ip = document.getElementById('ban-ip').value.trim();
+            const reason = document.getElementById('ban-reason').value.trim();
+            const duration = parseInt(document.getElementById('ban-duration').value);
+            
+            if (!ip) {
+                alert('Please enter an IP address');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/dashboard/api/bans', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY
+                    },
+                    body: JSON.stringify({ ip, reason: reason || 'Manual ban', minutes: duration })
+                });
+                
+                if (!response.ok) throw new Error('Failed to ban IP');
+                
+                showMessage('ban-message', 'IP banned successfully', 'success');
+                closeBanModal();
+                loadBans();
+                loadStats();
+            } catch (error) {
+                console.error('Error banning IP:', error);
+                alert('Error banning IP');
+            }
+        }
+        
+        async function unbanIP(ip) {
+            if (!confirm(`Unban IP ${ip}?`)) return;
+            
+            try {
+                const response = await fetch('/dashboard/api/bans/' + ip, {
+                    method: 'DELETE',
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                
+                if (!response.ok) throw new Error('Failed to unban IP');
+                
+                showMessage('ban-message', 'IP unbanned successfully', 'success');
+                loadBans();
+                loadStats();
+            } catch (error) {
+                console.error('Error unbanning IP:', error);
+                alert('Error unbanning IP');
+            }
+        }
+        
+        function showMessage(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => { el.innerHTML = ''; }, 3000);
+        }
+        
+        function initChart() {
+            const ctx = document.getElementById('alertChart').getContext('2d');
+            alertChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Alerts',
+                        data: [],
+                        borderColor: '#fff',
+                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointBackgroundColor: '#fff',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#000',
+                        pointHoverBorderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#fff'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: '#fff',
+                                maxRotation: 45,
+                                minRotation: 45
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        },
+                        y: {
+                            ticks: {
+                                color: '#fff',
+                                beginAtZero: true,
+                                precision: 0
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        async function loadChartData() {
+            const startDate = document.getElementById('chart-start-date').value;
+            const endDate = document.getElementById('chart-end-date').value;
+            const granularity = document.getElementById('granularity').value;
+            
+            const params = new URLSearchParams({
+                granularity: granularity
+            });
+            
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            try {
+                const response = await fetch('/dashboard/api/timeline?' + params, {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                
+                if (!response.ok) throw new Error('Failed to load chart data');
+                
+                const data = await response.json();
+                
+                alertChart.data.labels = data.labels;
+                alertChart.data.datasets[0].data = data.data;
+                alertChart.update();
+            } catch (error) {
+                console.error('Error loading chart data:', error);
+            }
+        }
+        
+        function updateChart() {
+            loadChartData();
+        }
+        
+        function logout() {
+            localStorage.removeItem('rwaf_api_key');
+            window.location.href = '/dashboard/login';
+        }
+    </script>
+</body>
+</html>
