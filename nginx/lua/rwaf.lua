@@ -80,7 +80,7 @@ function _M.check_request()
     end
 
     local httpc = http.new()
-    httpc:set_timeout(3000)
+    httpc:set_timeout(10000)
     local res, err = httpc:request_uri(WAF_HOST .. "/check", {
         method = "POST",
         body = cjson.encode({
@@ -100,7 +100,16 @@ function _M.check_request()
 
     if not res then
         ngx.log(ngx.ERR, "WAF check failed: ", err)
-        return ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+        local fail_count_key = "fail:" .. client_ip
+        local fails = (ban_cache:get(fail_count_key) or 0) + 1
+        ban_cache:set(fail_count_key, fails, 60)
+        if fails >= 3 then
+            ban_cache:set(cache_key, "1", 300)
+            ngx.status = ngx.HTTP_FORBIDDEN
+            ngx.say("<h1>Access Denied</h1><p>Too many errors</p>")
+            return ngx.exit(ngx.HTTP_FORBIDDEN)
+        end
+        return
     end
 
     local waf_response = cjson.decode(res.body)

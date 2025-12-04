@@ -8,7 +8,7 @@ services:
     volumes:
       - ./r_waf/:/app/
     ports:
-      - "5000:5000"
+      #- "5000:5000"
       - "1337:1337"
     environment:
       - PYTHONUNBUFFERED=1
