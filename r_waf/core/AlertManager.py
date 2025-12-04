@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import base64
+import threading
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,38 @@ class AlertManager:
     def __init__(self, alerts_dir="data/alerts"):
         self.alerts_dir = alerts_dir
         os.makedirs(self.alerts_dir, exist_ok=True)
+        self._file_lock = threading.Lock()
+        self._pending_alerts = {}
+        self._pending_lock = threading.Lock()
+        
+        self._start_auto_flush()
+    
+    def _start_auto_flush(self):
+        def auto_flush():
+            import time
+            while True:
+                time.sleep(2)
+                self._flush_pending_alerts()
+        
+        t = threading.Thread(target=auto_flush, daemon=True)
+        t.start()
+    
+    def _flush_pending_alerts(self):
+        with self._pending_lock:
+            if not self._pending_alerts:
+                return
+            
+            pending_copy = dict(self._pending_alerts)
+            self._pending_alerts.clear()
+        
+        for date_str, alerts_to_add in pending_copy.items():
+            if not alerts_to_add:
+                continue
+            
+            with self._file_lock:
+                existing_alerts = self._load_alerts_unsafe(date_str)
+                existing_alerts.extend(alerts_to_add)
+                self._save_alerts_unsafe(existing_alerts, date_str)
     
     def get_alert_file(self, date_str=None):
         if date_str:
@@ -17,8 +50,8 @@ class AlertManager:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return os.path.join(self.alerts_dir, f"{today}-alerts.json")
     
-    def load_alerts(self):
-        alert_file = self.get_alert_file()
+    def _load_alerts_unsafe(self, date_str=None):
+        alert_file = self.get_alert_file(date_str)
         if not os.path.exists(alert_file):
             return []
         
@@ -29,16 +62,32 @@ class AlertManager:
             logger.error(f"Failed to load alerts from {alert_file}: {e}")
             return []
     
-    def save_alerts(self, alerts):
-        alert_file = self.get_alert_file()
+    def load_alerts(self):
+        return self._load_alerts_unsafe()
+    
+    def _save_alerts_unsafe(self, alerts, date_str=None):
+        if date_str is None:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        alert_file = os.path.join(self.alerts_dir, f"{date_str}-alerts.json")
+        
         try:
-            with open(alert_file, "w", encoding="utf-8") as f:
+            temp_file = alert_file + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(alerts, f, indent=2, ensure_ascii=False)
+            os.replace(temp_file, alert_file)
         except Exception as e:
             logger.error(f"Failed to save alerts to {alert_file}: {e}")
     
+    def save_alerts(self, alerts, date_str=None):
+        if date_str is None:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        with self._file_lock:
+            self._save_alerts_unsafe(alerts, date_str)
+    
     def log_alert(self, module_name, action, reason, ip, method="", path="", user_agent="", matched_rule="", status_code=None):
-        alerts = self.load_alerts()
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         
         alert = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -53,8 +102,10 @@ class AlertManager:
             "status_code": status_code
         }
         
-        alerts.append(alert)
-        self.save_alerts(alerts)
+        with self._pending_lock:
+            if date_str not in self._pending_alerts:
+                self._pending_alerts[date_str] = []
+            self._pending_alerts[date_str].append(alert)
         
         logger.warning(f"[ALERT] {module_name} | {action} | {reason} | IP: {ip}")
     
