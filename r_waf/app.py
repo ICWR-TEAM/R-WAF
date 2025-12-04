@@ -101,7 +101,6 @@ class WAFApp:
         self.module_threads = config['module_threads']
 
         self.rules = {}
-        self._modules_cache = None
         
         from core.BanManager import BanManager
         from core.CacheManager import CacheManager
@@ -132,9 +131,7 @@ class WAFApp:
         return self._cached_check_request(ip, method, header, user_agent, path, body)
 
     def discover_modules(self):
-        if self._modules_cache is None:
-            self._modules_cache = sorted([f for f in Path("module/").rglob("*.py") if not f.name.startswith("__")])
-        return self._modules_cache
+        return sorted([f for f in Path("module/").rglob("*.py") if not f.name.startswith("__")])
     
     def load_module(self, file_path):
         name = file_path.stem
@@ -182,13 +179,6 @@ class WAFApp:
 
     def check_request(self, ip, method, header, user_agent, path, body=""):
         try:
-            if ip in self.ban_manager.whitelist:
-                return {"action": "allow"}
-            
-            banned, reason = self.ban_manager.is_banned(ip)
-            if banned:
-                return {"action": "block", "reason": f"banned: {reason}"}
-            
             modules = self.discover_modules()
             futures = {}
             with ThreadPoolExecutor(max_workers=self.module_threads) as ex:
@@ -217,6 +207,11 @@ class WAFApp:
                         if res["action"] == "block":
                             self.ban_manager.add_ban(ip, reason=res.get("reason"))
                             return res
+
+            banned, reason = self.ban_manager.is_banned(ip)
+            if banned:
+                logger.info(f"Blocked banned IP {ip}: {reason}")
+                return {"action": "block", "reason": f"banned: {reason}"}
 
         except Exception as e:
             logger.exception(f"Exception during check_request: {e}")
@@ -290,12 +285,14 @@ def main():
     config_path = args.config if args.config else CONFIG_PATH
     config = load_config(config_path)
     
+    # Load API key from environment
     api_key_env = os.environ.get('RWAF_API_KEY')
     if api_key_env:
         config['api_key'] = api_key_env
         logger_temp = logging.getLogger(__name__)
         logger_temp.info("API Key loaded from environment variable")
     
+    # Dashboard settings from environment
     enable_dashboard = os.environ.get('ENABLE_DASHBOARD', 'false').lower() == 'true'
     dashboard_port = int(os.environ.get('DASHBOARD_PORT', '1337'))
     
@@ -306,6 +303,7 @@ def main():
 
     waf = WAFApp(config)
     
+    # Run main WAF on port 5000
     from threading import Thread
     waf_thread = Thread(target=lambda: waf.app.run(
         host=config["host"], 
