@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Access Denied</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="https://incrustwerush.org/img/site/icon.ico" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background-color: #000;
+      color: #fff;
+      font-family: monospace;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div style="margin-bottom: 20px;">
+        <span style="font-size: 30px; font-weight: bold;">Access Denied</span>
+    </div>
+    <div style="margin-bottom: 20px;">
+        <span style="font-size: 20px; font-weight: bold;">Your IP <span style="color: red;">{{IP}}</span> has been blocked by the R-WAF</span>
+    </div>
+    <div style="margin-bottom: 20px;">
+        <span style="font-size: 16px;">Reason: <span style="color: red;">{{REASON}}</span></span>
+    </div>
+    <div style="margin-bottom: 20px;">
+          <span style="font-size: 16px;">Block time remaining: <span style="color: red;" id="countdown" data-expiry="$EXPIRY">$REMAIN seconds</span></span>
+      </div>
+    <div>
+        <span>R-WAF | R&D incrustwerush.org</span>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        var el = document.getElementById('countdown');
+        if(!el) return;
+        var expiry = parseInt(el.getAttribute('data-expiry') || '0', 10);
+        function formatSeconds(s){
+          if(s <= 0) return '0s';
+          var days = Math.floor(s/86400); s%=86400;
+          var hrs = Math.floor(s/3600); s%=3600;
+          var mins = Math.floor(s/60); var secs = s%60;
+          var parts = [];
+          if(days) parts.push(days + 'd');
+          if(hrs) parts.push(hrs + 'h');
+          if(mins) parts.push(mins + 'm');
+          parts.push(secs + 's');
+          return parts.join(' ');
+        }
+        function tick(){
+          if(!expiry || expiry <= 0){ el.textContent = 'Unknown'; return; }
+          var now = Date.now();
+          var diff = Math.floor((expiry - now)/1000);
+          if(diff <= 0){ el.textContent = 'Ban expired'; clearInterval(timer); return; }
+          el.textContent = formatSeconds(diff);
+        }
+        tick();
+        var timer = setInterval(tick, 1000);
+      })();
+    </script>
+    </div>
+  </div>
+</body>
+</html>
