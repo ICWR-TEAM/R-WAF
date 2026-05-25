@@ -1,376 +1,221 @@
-import os
-import json
-import logging
 import base64
-import threading
-from datetime import datetime, timezone, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-class RequestLogger:
-    
-    def __init__(self, logs_dir="data/traffic"):
-        self.logs_dir = logs_dir
-        os.makedirs(self.logs_dir, exist_ok=True)
-        self._file_lock = threading.Lock()
-        self._pending_logs = {}
-        self._pending_lock = threading.Lock()
-        
-        self._start_auto_flush()
-    
-    def _start_auto_flush(self):
-        def auto_flush():
-            import time
-            while True:
-                time.sleep(2)
-                self._flush_pending_logs()
-        
-        t = threading.Thread(target=auto_flush, daemon=True)
-        t.start()
-    
-    def _flush_pending_logs(self):
-        with self._pending_lock:
-            if not self._pending_logs:
-                return
-            
-            pending_copy = dict(self._pending_logs)
-            self._pending_logs.clear()
-        
-        for date_str, logs_to_add in pending_copy.items():
-            if not logs_to_add:
-                continue
-            
-            with self._file_lock:
-                existing_logs = self._load_logs_unsafe(date_str)
-                existing_logs.extend(logs_to_add)
-                self._save_logs_unsafe(existing_logs, date_str)
-    
-    def get_log_file(self, date_str=None):
-        if date_str:
-            return os.path.join(self.logs_dir, f"{date_str}-traffic.json")
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return os.path.join(self.logs_dir, f"{today}-traffic.json")
-    
-    def _load_logs_unsafe(self, date_str=None):
-        log_file = self.get_log_file(date_str)
-        if not os.path.exists(log_file):
-            return []
-        
+
+def _parse_range(start_date=None, end_date=None, default_days=7):
+    if start_date:
         try:
-            with open(log_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load traffic logs from {log_file}: {e}")
-            return []
-    
-    def load_logs(self):
-        return self._load_logs_unsafe()
-    
-    def _save_logs_unsafe(self, logs, date_str=None):
-        if date_str is None:
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        
-        log_file = os.path.join(self.logs_dir, f"{date_str}-traffic.json")
-        
-        try:
-            temp_file = log_file + ".tmp"
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(logs, f, indent=2, ensure_ascii=False)
-            os.replace(temp_file, log_file)
-        except Exception as e:
-            logger.error(f"Failed to save traffic logs to {log_file}: {e}")
-    
-    def save_logs(self, logs, date_str=None):
-        if date_str is None:
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        
-        with self._file_lock:
-            self._save_logs_unsafe(logs, date_str)
-    
-    def log_request(self, ip, method, path, user_agent="", action="allow", reason="", 
-                    status_code=None, module="", matched_rule=""):
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        
-        try:
-            if path and len(path) > 0:
-                decoded_path = base64.b64decode(path.encode()).decode() if path else ""
+            if "T" in start_date:
+                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
             else:
-                decoded_path = path
-        except:
-            decoded_path = path
-        
-        log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "ip": ip,
-            "method": method,
-            "path": decoded_path[:500] if decoded_path else "",  # Limit path length
-            "user_agent": user_agent[:200] if user_agent else "",
-            "action": action,
-            "reason": reason if reason else "",
-            "status_code": status_code,
-            "module": module if module else "",
-            "matched_rule": str(matched_rule)[:200] if matched_rule else ""
-        }
-        
-        with self._pending_lock:
-            if date_str not in self._pending_logs:
-                self._pending_logs[date_str] = []
-            self._pending_logs[date_str].append(log_entry)
-    
-    def get_logs_paginated(self, page=1, per_page=50, start_date=None, end_date=None, 
-                          keyword=None, action_filter=None):
-        all_logs = []
-        
-        if start_date:
-            try:
-                if 'T' in start_date:
-                    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                else:
-                    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except:
-                start_dt = datetime.now(timezone.utc) - timedelta(days=7)
-        else:
-            start_dt = datetime.now(timezone.utc) - timedelta(days=7)
-        
-        if end_date:
-            try:
-                if 'T' in end_date:
-                    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-                else:
-                    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
-            except:
-                end_dt = datetime.now(timezone.utc)
-        else:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            start_dt = datetime.now(timezone.utc) - timedelta(days=default_days)
+    else:
+        start_dt = datetime.now(timezone.utc) - timedelta(days=default_days)
+
+    if end_date:
+        try:
+            if "T" in end_date:
+                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            else:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+        except Exception:
             end_dt = datetime.now(timezone.utc)
-        
-        current_date = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_day = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        while current_date <= end_day:
-            date_str = current_date.strftime("%Y-%m-%d")
-            log_file = self.get_log_file(date_str)
-            
-            if os.path.exists(log_file):
-                try:
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        logs = json.load(f)
-                        for log in logs:
-                            try:
-                                log_time = datetime.fromisoformat(log.get("timestamp", "").replace('Z', '+00:00'))
-                                if start_dt <= log_time <= end_dt:
-                                    all_logs.append(log)
-                            except:
-                                all_logs.append(log)
-                except Exception as e:
-                    logger.error(f"Failed to load {log_file}: {e}")
-            
-            current_date += timedelta(days=1)
-        
+    else:
+        end_dt = datetime.now(timezone.utc)
+
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    return start_dt, end_dt
+
+
+class RequestLogger:
+    def __init__(self, storage):
+        self.storage = storage
+
+    def log_request(self, ip, method, path, user_agent="", action="allow", reason="",
+                    status_code=None, module="", matched_rule=""):
+        try:
+            decoded_path = base64.b64decode(path.encode()).decode() if path else ""
+        except Exception:
+            decoded_path = path or ""
+
+        with self.storage.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO traffic_logs (
+                    timestamp, ip, method, path, user_agent, action, reason,
+                    status_code, module, matched_rule
+                )
+                VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    ip,
+                    method or "",
+                    decoded_path[:500] if decoded_path else "",
+                    (user_agent or "")[:200],
+                    action,
+                    reason or "",
+                    status_code,
+                    module or "",
+                    str(matched_rule)[:200] if matched_rule else "",
+                ),
+            )
+
+    def _rows_to_logs(self, rows):
+        return [
+            {
+                "timestamp": row["timestamp"].isoformat(),
+                "ip": row["ip"],
+                "method": row["method"],
+                "path": row["path"],
+                "user_agent": row["user_agent"],
+                "action": row["action"],
+                "reason": row["reason"],
+                "status_code": row["status_code"],
+                "module": row["module"],
+                "matched_rule": row["matched_rule"],
+            }
+            for row in rows
+        ]
+
+    def get_logs_paginated(self, page=1, per_page=50, start_date=None, end_date=None,
+                          keyword=None, action_filter=None):
+        start_dt, end_dt = _parse_range(start_date, end_date)
+        where = ["timestamp BETWEEN %s AND %s"]
+        params = [start_dt, end_dt]
+
         if action_filter:
-            all_logs = [log for log in all_logs if log.get("action") == action_filter]
-        
+            where.append("action = %s")
+            params.append(action_filter)
+
         if keyword:
-            keyword_lower = keyword.lower()
-            all_logs = [
-                log for log in all_logs 
-                if keyword_lower in str(log.get("ip", "")).lower() 
-                or keyword_lower in str(log.get("path", "")).lower()
-                or keyword_lower in str(log.get("reason", "")).lower()
-                or keyword_lower in str(log.get("method", "")).lower()
-                or keyword_lower in str(log.get("module", "")).lower()
-            ]
-        
-        all_logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        
-        total = len(all_logs)
+            where.append("(ip ILIKE %s OR path ILIKE %s OR reason ILIKE %s OR method ILIKE %s OR module ILIKE %s)")
+            like = f"%{keyword}%"
+            params.extend([like, like, like, like, like])
+
+        where_sql = " AND ".join(where)
+        offset = max(page - 1, 0) * per_page
+
+        with self.storage.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS total FROM traffic_logs WHERE {where_sql}", params)
+            total = cur.fetchone()["total"]
+            cur.execute(
+                f"""
+                SELECT timestamp, ip, method, path, user_agent, action, reason,
+                       status_code, module, matched_rule
+                FROM traffic_logs
+                WHERE {where_sql}
+                ORDER BY timestamp DESC
+                LIMIT %s OFFSET %s
+                """,
+                params + [per_page, offset],
+            )
+            rows = cur.fetchall()
+
         total_pages = (total + per_page - 1) // per_page if total > 0 else 1
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        
         return {
-            "logs": all_logs[start_idx:end_idx],
+            "logs": self._rows_to_logs(rows),
             "total": total,
             "page": page,
             "per_page": per_page,
-            "total_pages": total_pages
+            "total_pages": total_pages,
         }
-    
+
     def get_stats(self, start_date=None, end_date=None):
-        all_logs = []
-        
-        if start_date and end_date:
-            try:
-                if 'T' in start_date:
-                    start_dt = datetime.fromisoformat(start_date)
-                    if start_dt.tzinfo is None:
-                        start_dt = start_dt.replace(tzinfo=timezone.utc)
-                else:
-                    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                
-                if 'T' in end_date:
-                    end_dt = datetime.fromisoformat(end_date)
-                    if end_dt.tzinfo is None:
-                        end_dt = end_dt.replace(tzinfo=timezone.utc)
-                else:
-                    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
-            except:
-                end_dt = datetime.now(timezone.utc)
-                start_dt = end_dt - timedelta(days=7)
-        else:
-            end_dt = datetime.now(timezone.utc)
-            start_dt = end_dt - timedelta(days=7)
-        
-        current_date = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_day = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        while current_date <= end_day:
-            date_str = current_date.strftime("%Y-%m-%d")
-            log_file = self.get_log_file(date_str)
-            
-            if os.path.exists(log_file):
-                try:
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        logs = json.load(f)
-                        for log in logs:
-                            try:
-                                log_time = datetime.fromisoformat(log.get("timestamp", "").replace('Z', '+00:00'))
-                                if start_dt <= log_time <= end_dt:
-                                    all_logs.append(log)
-                            except:
-                                pass
-                except Exception as e:
-                    logger.error(f"Failed to load {log_file}: {e}")
-            
-            current_date += timedelta(days=1)
-        
-        total_requests = len(all_logs)
-        allowed_requests = len([log for log in all_logs if log.get("action") == "allow"])
-        blocked_requests = len([log for log in all_logs if log.get("action") == "block"])
-        unique_ips = len(set(log.get("ip") for log in all_logs))
-        
-        method_counts = {}
-        for log in all_logs:
-            method = log.get("method", "UNKNOWN")
-            method_counts[method] = method_counts.get(method, 0) + 1
-        
-        blocked_ip_counts = {}
-        for log in all_logs:
-            if log.get("action") == "block":
-                ip = log.get("ip")
-                blocked_ip_counts[ip] = blocked_ip_counts.get(ip, 0) + 1
-        
-        top_blocked_ips = sorted(
-            blocked_ip_counts.items(), 
-            key=lambda x: x[1], 
-            reverse=True
-        )[:10]
-        
+        start_dt, end_dt = _parse_range(start_date, end_date)
+
+        with self.storage.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_requests,
+                    COUNT(*) FILTER (WHERE action = 'allow') AS allowed_requests,
+                    COUNT(*) FILTER (WHERE action = 'block') AS blocked_requests,
+                    COUNT(DISTINCT ip) AS unique_ips
+                FROM traffic_logs
+                WHERE timestamp BETWEEN %s AND %s
+                """,
+                (start_dt, end_dt),
+            )
+            totals = cur.fetchone()
+
+            cur.execute(
+                """
+                SELECT method, COUNT(*) AS count
+                FROM traffic_logs
+                WHERE timestamp BETWEEN %s AND %s
+                GROUP BY method
+                ORDER BY count DESC
+                """,
+                (start_dt, end_dt),
+            )
+            method_counts = {row["method"]: row["count"] for row in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT ip, COUNT(*) AS count
+                FROM traffic_logs
+                WHERE timestamp BETWEEN %s AND %s AND action = 'block'
+                GROUP BY ip
+                ORDER BY count DESC
+                LIMIT 10
+                """,
+                (start_dt, end_dt),
+            )
+            top_blocked_ips = [{"ip": row["ip"], "count": row["count"]} for row in cur.fetchall()]
+
         return {
-            "total_requests": total_requests,
-            "allowed_requests": allowed_requests,
-            "blocked_requests": blocked_requests,
-            "unique_ips": unique_ips,
+            "total_requests": totals["total_requests"],
+            "allowed_requests": totals["allowed_requests"],
+            "blocked_requests": totals["blocked_requests"],
+            "unique_ips": totals["unique_ips"],
             "method_counts": method_counts,
-            "top_blocked_ips": [{"ip": ip, "count": count} for ip, count in top_blocked_ips]
+            "top_blocked_ips": top_blocked_ips,
         }
-    
+
     def get_timeline_data(self, start_date=None, end_date=None, granularity="hour"):
-        all_logs = []
-        
-        if start_date and end_date:
-            try:
-                if 'T' in start_date:
-                    start_dt = datetime.fromisoformat(start_date)
-                    if start_dt.tzinfo is None:
-                        start_dt = start_dt.replace(tzinfo=timezone.utc)
-                else:
-                    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                
-                if 'T' in end_date:
-                    end_dt = datetime.fromisoformat(end_date)
-                    if end_dt.tzinfo is None:
-                        end_dt = end_dt.replace(tzinfo=timezone.utc)
-                else:
-                    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
-            except:
-                end_dt = datetime.now(timezone.utc)
-                start_dt = end_dt - timedelta(days=7)
-        else:
-            end_dt = datetime.now(timezone.utc)
-            start_dt = end_dt - timedelta(days=7)
-        
-        current_date = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_day = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        while current_date <= end_day:
-            date_str = current_date.strftime("%Y-%m-%d")
-            log_file = self.get_log_file(date_str)
-            
-            if os.path.exists(log_file):
-                try:
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        logs = json.load(f)
-                        for log in logs:
-                            try:
-                                log_time = datetime.fromisoformat(log.get("timestamp", "").replace('Z', '+00:00'))
-                                if start_dt <= log_time <= end_dt:
-                                    all_logs.append(log)
-                            except:
-                                pass
-                except Exception as e:
-                    logger.error(f"Failed to load {log_file}: {e}")
-            
-            current_date += timedelta(days=1)
-        
-        timeline_allowed = {}
-        timeline_blocked = {}
-        
-        for log in all_logs:
-            timestamp = log.get("timestamp", "")
-            if not timestamp:
-                continue
-            
-            try:
-                dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                
-                if granularity == "hour":
-                    key = dt.strftime("%Y-%m-%d %H:00")
-                elif granularity == "day":
-                    key = dt.strftime("%Y-%m-%d")
-                else:
-                    key = dt.strftime("%Y-%m-%d %H:00")
-                
-                action = log.get("action", "allow")
-                if action == "block":
-                    timeline_blocked[key] = timeline_blocked.get(key, 0) + 1
-                else:
-                    timeline_allowed[key] = timeline_allowed.get(key, 0) + 1
-                    
-            except Exception as e:
-                logger.error(f"Failed to parse timestamp {timestamp}: {e}")
-                continue
-        
-        # Get all unique keys and sort
-        all_keys = sorted(set(list(timeline_allowed.keys()) + list(timeline_blocked.keys())))
-        
-        # Build arrays with 0 for missing values
-        allowed_data = [timeline_allowed.get(key, 0) for key in all_keys]
-        blocked_data = [timeline_blocked.get(key, 0) for key in all_keys]
-        
+        start_dt, end_dt = _parse_range(start_date, end_date)
+        bucket = "day" if granularity == "day" else "hour"
+
+        with self.storage.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    date_trunc(%s, timestamp) AS bucket,
+                    COUNT(*) FILTER (WHERE action = 'allow') AS allowed,
+                    COUNT(*) FILTER (WHERE action = 'block') AS blocked
+                FROM traffic_logs
+                WHERE timestamp BETWEEN %s AND %s
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                (bucket, start_dt, end_dt),
+            )
+            rows = cur.fetchall()
+
+        fmt = "%Y-%m-%d" if bucket == "day" else "%Y-%m-%d %H:00"
         return {
-            "labels": all_keys,
-            "allowed": allowed_data,
-            "blocked": blocked_data
+            "labels": [row["bucket"].strftime(fmt) for row in rows],
+            "allowed": [row["allowed"] for row in rows],
+            "blocked": [row["blocked"] for row in rows],
         }
-    
+
     def clear_logs(self, date_str=None):
-        log_file = self.get_log_file(date_str)
-        if os.path.exists(log_file):
-            try:
-                os.remove(log_file)
-                logger.info(f"Cleared traffic logs: {log_file}")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to clear logs: {e}")
-                return False
+        with self.storage.cursor() as cur:
+            if date_str:
+                start_dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                end_dt = start_dt.replace(hour=23, minute=59, second=59)
+                cur.execute("DELETE FROM traffic_logs WHERE timestamp BETWEEN %s AND %s", (start_dt, end_dt))
+            else:
+                cur.execute("DELETE FROM traffic_logs")
+        logger.info("Cleared traffic logs from PostgreSQL")
         return True

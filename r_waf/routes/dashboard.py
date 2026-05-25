@@ -7,11 +7,12 @@ logger = logging.getLogger(__name__)
 
 dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/dashboard')
 
-def init_dashboard(alert_manager, ban_manager, request_logger, system_monitor, api_key):
+def init_dashboard(alert_manager, ban_manager, request_logger, system_monitor, reverse_proxy_manager, api_key):
     dashboard_bp.alert_manager = alert_manager
     dashboard_bp.ban_manager = ban_manager
     dashboard_bp.request_logger = request_logger
     dashboard_bp.system_monitor = system_monitor
+    dashboard_bp.reverse_proxy_manager = reverse_proxy_manager
     dashboard_bp.api_key = api_key
     return dashboard_bp
 
@@ -227,4 +228,51 @@ def get_system_history():
         return jsonify(history)
     except Exception as e:
         logger.error(f"Error getting system history: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@dashboard_bp.route('/api/reverse-proxies', methods=['GET'])
+@require_api_key
+def get_reverse_proxies():
+    try:
+        return jsonify({"proxies": dashboard_bp.reverse_proxy_manager.list_proxies()})
+    except Exception as e:
+        logger.error(f"Error getting reverse proxies: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@dashboard_bp.route('/api/reverse-proxies', methods=['POST'])
+@require_api_key
+def create_reverse_proxy():
+    try:
+        proxy = dashboard_bp.reverse_proxy_manager.create_proxy(request.get_json() or {})
+        return jsonify({"proxy": proxy}), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating reverse proxy: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@dashboard_bp.route('/api/reverse-proxies/<int:proxy_id>', methods=['PUT'])
+@require_api_key
+def update_reverse_proxy(proxy_id):
+    try:
+        proxy = dashboard_bp.reverse_proxy_manager.update_proxy(proxy_id, request.get_json() or {})
+        if not proxy:
+            return jsonify({"error": "Reverse proxy not found"}), 404
+        return jsonify({"proxy": proxy})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error updating reverse proxy: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@dashboard_bp.route('/api/reverse-proxies/<int:proxy_id>', methods=['DELETE'])
+@require_api_key
+def delete_reverse_proxy(proxy_id):
+    try:
+        deleted = dashboard_bp.reverse_proxy_manager.delete_proxy(proxy_id)
+        if not deleted:
+            return jsonify({"error": "Reverse proxy not found"}), 404
+        return jsonify({"message": "Reverse proxy deleted"})
+    except Exception as e:
+        logger.error(f"Error deleting reverse proxy: {e}")
         return jsonify({"error": str(e)}), 500

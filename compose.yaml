@@ -1,10 +1,26 @@
 #version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      - POSTGRES_DB=rwaf
+      - POSTGRES_USER=rwaf
+      - POSTGRES_PASSWORD=rwaf
+    volumes:
+      - ./r_waf/data/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rwaf -d rwaf"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   r-waf:
     build:
       context: .
       dockerfile: Dockerfile.rwaf
+    restart: always
     volumes:
       - ./r_waf/:/app/
     ports:
@@ -12,18 +28,20 @@ services:
       - "1337:1337"
     environment:
       - PYTHONUNBUFFERED=1
-      - R_WAF_API_KEY=incrustwerush.org
+      - RWAF_API_KEY=incrustwerush.org
       - ENABLE_DASHBOARD=true
       - DASHBOARD_PORT=1337
+      - DATABASE_URL=postgresql://rwaf:rwaf@postgres:5432/rwaf
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   openresty:
     #image: openresty/openresty:alpine
     build:
       context: .
       dockerfile: Dockerfile.openresty
-    environment:
-      - WEB_SERVER_HOST=example.com # your host here
-      - WEB_SERVER_PORT=80 # your web server port here
+    restart: always
     depends_on:
       - r-waf
     ports:
@@ -32,3 +50,6 @@ services:
       #- ./nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./nginx/lua:/etc/nginx/lua:ro
       #- ./www:/www
+
+volumes:
+  postgres-data:

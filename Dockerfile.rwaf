@@ -5,8 +5,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apk add --no-cache gcc python3-dev musl-dev linux-headers && \
-    pip install flask psutil && \
+RUN apk add --no-cache gcc python3-dev musl-dev linux-headers postgresql-dev && \
+    pip install flask psutil psycopg2-binary && \
     apk del gcc python3-dev musl-dev linux-headers
 
 CMD ["python", "app.py", "--config", "data/config.json"]

@@ -30,15 +30,12 @@ sys.dont_write_bytecode = True
 
 BASE_DIR = "./data"
 RULES_DIR = os.path.join(BASE_DIR, "rules")
-BANS_DIR = os.path.join(BASE_DIR, "bans")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-BANS_FILE_DEFAULT = os.path.join(BANS_DIR, "bans.json")
-WHITELIST_FILE_DEFAULT = os.path.join(BANS_DIR, "whitelist.json")
+DATABASE_URL_DEFAULT = "postgresql://rwaf:rwaf@postgres:5432/rwaf"
 
 DEFAULT_CONFIG = {
     "rules_dir": RULES_DIR,
-    "bans_file": BANS_FILE_DEFAULT,
-    "whitelist_file": WHITELIST_FILE_DEFAULT,
+    "database_url": DATABASE_URL_DEFAULT,
     "banned_page_file": "ban.html",
     "module_threads": 10,
     "api_key": "incrustwerush.org",
@@ -60,19 +57,11 @@ logger = None
 
 def ensure_dirs_and_files(config):
     os.makedirs(config["rules_dir"], exist_ok=True)
-    os.makedirs(os.path.dirname(config["bans_file"]), exist_ok=True)
+    os.makedirs(config.get("base_dir", BASE_DIR), exist_ok=True)
 
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "w") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
-
-    if not os.path.exists(config["bans_file"]):
-        with open(config["bans_file"], "w") as f:
-            f.write("{}")
-
-    if not os.path.exists(config["whitelist_file"]):
-        with open(config["whitelist_file"], "w") as f:
-            json.dump([], f)
     
     from core.InitializeDefaultRules import initialize_default_rules
     initialize_default_rules(config["rules_dir"])
@@ -107,20 +96,25 @@ class WAFApp:
         from core.AlertManager import AlertManager
         from core.RequestLogger import RequestLogger
         from core.SystemMonitor import SystemMonitor
+        from core.ReverseProxyManager import ReverseProxyManager
+        from storage import PostgresStorage
+
+        self.storage = PostgresStorage(config.get("database_url"))
         
         self.ban_manager = BanManager(
-            config["bans_file"],
-            config["whitelist_file"],
+            self.storage,
             config["delay_ban_minutes"]
         )
         
         self.cache_manager = CacheManager(maxsize=config['cache_maxsize'])
         
-        self.alert_manager = AlertManager(alerts_dir=os.path.join(config['base_dir'], 'alerts'))
+        self.alert_manager = AlertManager(self.storage)
         
-        self.request_logger = RequestLogger(logs_dir=os.path.join(config['base_dir'], 'traffic'))
+        self.request_logger = RequestLogger(self.storage)
         
         self.system_monitor = SystemMonitor()
+
+        self.reverse_proxy_manager = ReverseProxyManager(self.storage)
         
         self._cached_check_request = self.cache_manager.cached(self._check_request_impl)
 
@@ -134,7 +128,31 @@ class WAFApp:
         return self.check_request(ip, method, header, user_agent, path, body)
     
     def check_request_cached(self, ip, method, header, user_agent, path, body=""):
-        return self._cached_check_request(ip, method, header, user_agent, path, body)
+        banned, reason = self.ban_manager.is_banned(ip)
+        if banned:
+            logger.info(f"Blocked banned IP {ip}: {reason}")
+            self.alert_manager.log_alert(
+                module_name="BanManager",
+                action="block",
+                reason=f"banned: {reason}",
+                ip=ip,
+                method=method,
+                path=path,
+                user_agent=user_agent,
+                matched_rule=ip
+            )
+            self.request_logger.log_request(
+                ip=ip,
+                method=method,
+                path=path,
+                user_agent=user_agent,
+                action="block",
+                reason=f"banned: {reason}",
+                module="BanManager"
+            )
+            return {"action": "block", "reason": f"banned: {reason}"}
+
+        return self.check_request(ip, method, header, user_agent, path, body)
 
     def discover_modules(self):
         return sorted([f for f in Path("module/").rglob("*.py") if not f.name.startswith("__")])
@@ -337,7 +355,11 @@ def main():
         config['api_key'] = api_key_env
         logger_temp = logging.getLogger(__name__)
         logger_temp.info("API Key loaded from environment variable")
-    
+
+    database_url_env = os.environ.get('DATABASE_URL')
+    if database_url_env:
+        config['database_url'] = database_url_env
+
     enable_dashboard = os.environ.get('ENABLE_DASHBOARD', 'false').lower() == 'true'
     dashboard_port = int(os.environ.get('DASHBOARD_PORT', '1337'))
     
@@ -375,6 +397,7 @@ def main():
             waf.ban_manager,
             waf.request_logger,
             waf.system_monitor,
+            waf.reverse_proxy_manager,
             config['api_key']
         )
         dashboard_app.register_blueprint(dashboard_bp)

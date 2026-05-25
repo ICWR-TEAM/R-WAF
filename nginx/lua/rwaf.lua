@@ -7,6 +7,18 @@ local WAF_HOST = "http://r-waf:5000"
 local config_cache = nil
 local config_cache_time = 0
 
+function _M.get_client_ip()
+    local client_ip = ngx.var.remote_addr or ngx.var.http_cf_connecting_ip or ngx.var.http_x_real_ip or ngx.var.http_x_forwarded_for or ""
+    if ngx.var.http_cf_connecting_ip and ngx.var.http_cf_connecting_ip ~= "" then
+        client_ip = ngx.var.http_cf_connecting_ip
+    end
+    if client_ip and client_ip ~= "" then
+        client_ip = client_ip:match("([^,]+)")
+        client_ip = client_ip:gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    return client_ip
+end
+
 function _M.get_config()
     local now = ngx.time()
     if config_cache and (now - config_cache_time) < 60 then
@@ -34,8 +46,7 @@ end
 
 function _M.check_request()
     local config = _M.get_config()
-    local client_ip = ngx.var.http_x_forwarded_for or ngx.var.http_cf_connecting_ip or ngx.var.remote_addr
-    client_ip = client_ip:match("([^,]+)")
+    local client_ip = _M.get_client_ip()
     
     local header = cjson.encode(ngx.req.get_headers())
     local user_agent = ngx.var.http_user_agent or ""
@@ -60,7 +71,10 @@ function _M.check_request()
             body_raw_b64 = ngx.encode_base64(request_body)
         }),
         headers = {
-            ["Content-Type"] = "application/json"
+            ["Content-Type"] = "application/json",
+            ["X-Real-IP"] = client_ip,
+            ["X-Forwarded-For"] = client_ip,
+            ["CF-Connecting-IP"] = client_ip
         }
     })
 
@@ -94,6 +108,47 @@ function _M.check_request()
     end
 end
 
+function _M.resolve_proxy()
+    local host = ngx.var.host or ""
+    local path = ngx.var.request_uri or "/"
+    local client_ip = _M.get_client_ip()
+
+    local httpc = http.new()
+    httpc:set_timeout(2000)
+    local res, err = httpc:request_uri(WAF_HOST .. "/proxy/resolve", {
+        method = "GET",
+        query = {
+            host = host,
+            path = path
+        },
+        headers = {
+            ["X-Real-IP"] = client_ip,
+            ["X-Forwarded-For"] = client_ip,
+            ["CF-Connecting-IP"] = client_ip,
+            ["User-Agent"] = ngx.var.http_user_agent or ""
+        }
+    })
+
+    if not res or res.status ~= 200 then
+        ngx.log(ngx.ERR, "Proxy resolve failed: ", err or (res and res.status) or "unknown")
+        ngx.status = ngx.HTTP_BAD_GATEWAY
+        ngx.header.content_type = "text/html"
+        ngx.say("<h1>Bad Gateway</h1><p>No reverse proxy route configured.</p>")
+        return ngx.exit(ngx.HTTP_BAD_GATEWAY)
+    end
+
+    local ok, proxy_config = pcall(cjson.decode, res.body)
+    if not ok or not proxy_config["upstream"] then
+        ngx.log(ngx.ERR, "Invalid proxy resolve response")
+        ngx.status = ngx.HTTP_BAD_GATEWAY
+        ngx.header.content_type = "text/html"
+        ngx.say("<h1>Bad Gateway</h1><p>Invalid reverse proxy route.</p>")
+        return ngx.exit(ngx.HTTP_BAD_GATEWAY)
+    end
+
+    return proxy_config["upstream"]
+end
+
 function _M.accumulate_response_body()
     local ctx = ngx.ctx
     
@@ -116,11 +171,8 @@ function _M.accumulate_response_body()
     if not ctx.response_status then
         ctx.response_status = ngx.status
         ctx.response_method = ngx.var.request_method
-        ctx.response_ip = ngx.var.http_x_forwarded_for or ngx.var.http_cf_connecting_ip or ngx.var.remote_addr
+        ctx.response_ip = _M.get_client_ip()
         ctx.response_headers = cjson.encode(ngx.resp.get_headers())
-        if ctx.response_ip then
-            ctx.response_ip = ctx.response_ip:match("([^,]+)")
-        end
     end
 end
 

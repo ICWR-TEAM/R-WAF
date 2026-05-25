@@ -14,6 +14,42 @@ def setup_routes(app, waf_instance):
             "enable_response_body_check": waf_instance.config.get("enable_response_body_check", False),
             "enable_response_filter": waf_instance.config.get("enable_response_filter", True)
         })
+
+    @app.route("/proxy/resolve", methods=["GET"])
+    def resolve_proxy():
+        host = request.args.get("host", "")
+        path = request.args.get("path", "/")
+        proxy = waf_instance.reverse_proxy_manager.resolve(host, path)
+        if not proxy:
+            ip = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For") or request.remote_addr or ""
+            if ip:
+                ip = ip.split(",")[0].strip()
+            reason = f"No reverse proxy route matched for host={host} path={path}"
+            waf_instance.ban_manager.add_ban(ip, reason=reason)
+            waf_instance.alert_manager.log_alert(
+                module_name="ReverseProxy",
+                action="block",
+                reason=reason,
+                ip=ip,
+                method=request.method,
+                path="",
+                user_agent=request.headers.get("User-Agent", ""),
+                matched_rule=f"{host}{path}",
+                status_code=502
+            )
+            waf_instance.request_logger.log_request(
+                ip=ip,
+                method=request.method,
+                path="",
+                user_agent=request.headers.get("User-Agent", ""),
+                action="block",
+                reason=reason,
+                status_code=502,
+                module="ReverseProxy",
+                matched_rule=f"{host}{path}"
+            )
+            return jsonify({"error": "No reverse proxy route matched"}), 404
+        return jsonify(proxy)
     
     @app.route("/reload", methods=["GET"])
     def reload_all():
@@ -40,7 +76,9 @@ def setup_routes(app, waf_instance):
     @app.route("/check", methods=["POST"])
     def check():
         data = request.json or {}
-        ip = data.get("ip", "")
+        ip = data.get("ip") or request.headers.get("CF-Connecting-IP") or request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For") or request.remote_addr or ""
+        if ip:
+            ip = ip.split(",")[0].strip()
         method = data.get("method", "")
         ua = data.get("user_agent", "")
         path = data.get("path", "")

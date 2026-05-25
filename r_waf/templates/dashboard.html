@@ -581,6 +581,10 @@
                     <i class="bi bi-shield-x"></i>
                     <div>Bans</div>
                 </div>
+                <div class="nav-item" onclick="navigateTo('reverse-proxy')">
+                    <i class="bi bi-diagram-3"></i>
+                    <div>Reverse Proxy</div>
+                </div>
             </div>
             
             <div class="sidebar-footer">
@@ -840,6 +844,35 @@
                     </tbody>
                 </table>
             </div>
+
+            <div class="page" id="reverse-proxy-page">
+                <div class="page-header">
+                    <h2>Reverse Proxy</h2>
+                    <p>Manage OpenResty upstream routing</p>
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <button class="btn-primary" onclick="showProxyModal()">+ Add Route</button>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Host</th>
+                            <th>Path Prefix</th>
+                            <th>Upstream</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reverse-proxy-table">
+                        <tr>
+                            <td colspan="6" style="text-align: center;">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
     
@@ -866,11 +899,47 @@
             </div>
         </div>
     </div>
+
+    <div class="modal" id="proxy-modal">
+        <div class="modal-content">
+            <div class="modal-header" id="proxy-modal-title">Add Reverse Proxy Route</div>
+            <div class="modal-body">
+                <input type="hidden" id="proxy-id">
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>Name</label>
+                    <input type="text" id="proxy-name" placeholder="Main app">
+                </div>
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>Host</label>
+                    <input type="text" id="proxy-host" placeholder="app.yourdomain.tld, empty for wildcard">
+                </div>
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>Path Prefix</label>
+                    <input type="text" id="proxy-path-prefix" value="/" placeholder="/api">
+                </div>
+                <div class="filter-group" style="margin-bottom: 15px;">
+                    <label>Upstream URL</label>
+                    <input type="text" id="proxy-upstream-url" placeholder="http://backend:8080">
+                </div>
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="proxy-enabled" checked style="width: auto; margin-right: 8px;">
+                        Enabled
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeProxyModal()">Cancel</button>
+                <button class="btn-primary" onclick="submitProxy()">Save Route</button>
+            </div>
+        </div>
+    </div>
     
     <script>
         const API_KEY = localStorage.getItem('rwaf_api_key');
         let charts = {};
         let currentPage = 'overview';
+        let reverseProxyCache = {};
         
         document.addEventListener('DOMContentLoaded', function() {
             if (!API_KEY) {
@@ -917,6 +986,8 @@
                     loadTraffic();
                 } else if (currentPage === 'bans') {
                     loadBans();
+                } else if (currentPage === 'reverse-proxy') {
+                    loadReverseProxies();
                 }
             }, 30000);
         });
@@ -958,6 +1029,8 @@
                 loadTraffic();
             } else if (page === 'bans') {
                 loadBans();
+            } else if (page === 'reverse-proxy') {
+                loadReverseProxies();
             }
         }
         
@@ -1507,6 +1580,129 @@
                 console.error('Error unbanning IP:', error);
                 alert('Error unbanning IP');
             }
+        }
+
+        async function loadReverseProxies() {
+            try {
+                const response = await fetch('/dashboard/api/reverse-proxies', {
+                    headers: { 'X-API-Key': API_KEY }
+                });
+                const data = await response.json();
+                renderReverseProxies(data.proxies || []);
+            } catch (error) {
+                console.error('Error loading reverse proxies:', error);
+            }
+        }
+
+        function renderReverseProxies(proxies) {
+            const tbody = document.getElementById('reverse-proxy-table');
+            reverseProxyCache = Object.fromEntries(proxies.map(proxy => [proxy.id, proxy]));
+
+            if (proxies.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No reverse proxy routes</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = proxies.map(proxy => `
+                <tr>
+                    <td>${escapeHtml(proxy.name)}</td>
+                    <td>${escapeHtml(proxy.host || '*')}</td>
+                    <td>${escapeHtml(proxy.path_prefix)}</td>
+                    <td>${escapeHtml(proxy.upstream_url)}</td>
+                    <td>
+                        <span class="status-badge ${proxy.enabled ? 'status-active' : 'status-expired'}">
+                            ${proxy.enabled ? 'ENABLED' : 'DISABLED'}
+                        </span>
+                    </td>
+                    <td>
+                        <button class="btn-primary" onclick="showProxyModal(reverseProxyCache[${proxy.id}])">Edit</button>
+                        <button class="btn-danger" onclick="deleteProxy(${proxy.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function showProxyModal(proxy = null) {
+            document.getElementById('proxy-modal-title').textContent = proxy ? 'Edit Reverse Proxy Route' : 'Add Reverse Proxy Route';
+            document.getElementById('proxy-id').value = proxy ? proxy.id : '';
+            document.getElementById('proxy-name').value = proxy ? proxy.name : '';
+            document.getElementById('proxy-host').value = proxy ? proxy.host : '';
+            document.getElementById('proxy-path-prefix').value = proxy ? proxy.path_prefix : '/';
+            document.getElementById('proxy-upstream-url').value = proxy ? proxy.upstream_url : '';
+            document.getElementById('proxy-enabled').checked = proxy ? proxy.enabled : true;
+            document.getElementById('proxy-modal').classList.add('active');
+        }
+
+        function closeProxyModal() {
+            document.getElementById('proxy-modal').classList.remove('active');
+        }
+
+        async function submitProxy() {
+            const id = document.getElementById('proxy-id').value;
+            const payload = {
+                name: document.getElementById('proxy-name').value.trim(),
+                host: document.getElementById('proxy-host').value.trim(),
+                path_prefix: document.getElementById('proxy-path-prefix').value.trim() || '/',
+                upstream_url: document.getElementById('proxy-upstream-url').value.trim(),
+                enabled: document.getElementById('proxy-enabled').checked
+            };
+
+            if (!payload.upstream_url) {
+                alert('Please enter an upstream URL');
+                return;
+            }
+
+            try {
+                const response = await fetch(id ? `/dashboard/api/reverse-proxies/${id}` : '/dashboard/api/reverse-proxies', {
+                    method: id ? 'PUT' : 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    closeProxyModal();
+                    loadReverseProxies();
+                } else {
+                    const data = await response.json();
+                    alert('Error: ' + (data.error || 'Failed to save reverse proxy route'));
+                }
+            } catch (error) {
+                console.error('Error saving reverse proxy:', error);
+                alert('Error saving reverse proxy route');
+            }
+        }
+
+        async function deleteProxy(id) {
+            if (!confirm('Delete this reverse proxy route?')) return;
+
+            try {
+                const response = await fetch(`/dashboard/api/reverse-proxies/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'X-API-Key': API_KEY }
+                });
+
+                if (response.ok) {
+                    loadReverseProxies();
+                } else {
+                    alert('Error deleting reverse proxy route');
+                }
+            } catch (error) {
+                console.error('Error deleting reverse proxy:', error);
+                alert('Error deleting reverse proxy route');
+            }
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
         }
         
         function logout() {
